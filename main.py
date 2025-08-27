@@ -464,6 +464,7 @@ def procesar_facturas(cloud_event):
         return ("", 204)
 
 
-FU
+FUCK
+
 
 
