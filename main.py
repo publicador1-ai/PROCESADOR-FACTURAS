@@ -480,4 +480,5 @@ def procesar_facturas(request: Request):
         # Devuelve 204 para no reintentar en bucle; los logs ya muestran el error
         return ("", 204)
 
-# trigger build
+# trigger buildLOL
+
