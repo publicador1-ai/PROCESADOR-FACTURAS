@@ -479,3 +479,5 @@ def procesar_facturas(request: Request):
         print(json.dumps({"step": "UNHANDLED_ERROR", "err": str(e)}))
         # Devuelve 204 para no reintentar en bucle; los logs ya muestran el error
         return ("", 204)
+
+# trigger build
