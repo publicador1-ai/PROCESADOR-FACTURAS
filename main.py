@@ -153,21 +153,16 @@ def process_invoice(cloud_event):
                 item_details = {prop.type_: prop.mention_text for prop in item.properties}
                 
                 if proveedor_final == "Sam´s Club":
-                    # --- CÁLCULO PARA SAMS ---
-                    # 1. Obtener datos base
                     unidades = text_to_decimal(item_details.get('CANTIDAD_PRODUCTO', '0'))
                     importe_bruto = text_to_decimal(item_details.get('COSTO_TOTAL_POR_PRODUCTO', '0'))
                     descuento = text_to_decimal(item_details.get('DESCUENTO', '0'))
                     texto_impuestos = item_details.get('IVA', '') + " " + item_details.get('IEPS', '')
 
-                    # 2. Extraer montos de impuestos
                     importe_iva = extraer_importe_sams(texto_impuestos, "IVA")
                     importe_ieps = extraer_importe_sams(texto_impuestos, "IEPS")
                     
-                    # 3. Calcular Costo Total Neto
                     costo_total_neto = importe_bruto - descuento + importe_iva + importe_ieps
                     
-                    # 4. Extraer porcentajes para el reporte
                     iva_pct = extraer_porcentaje_sams(texto_impuestos, "IVA")
                     ieps_pct = extraer_porcentaje_sams(texto_impuestos, "IEPS")
                     valor_iva = formatear_porcentaje(iva_pct)
@@ -177,12 +172,9 @@ def process_invoice(cloud_event):
                     descripcion = item_details.get('DESCRIPCION_PRODUCTO', '')
 
                 else: # City Club
-                    # --- CÁLCULO PARA CITY CLUB ---
-                    # 1. Obtener datos base
                     unidades = text_to_decimal(item_details.get('quantity', '0'))
-                    costo_total_neto = text_to_decimal(item_details.get('total_amount', '0')) # total_amount ya es el neto
+                    costo_total_neto = text_to_decimal(item_details.get('total_amount', '0'))
 
-                    # 2. Calcular porcentajes para el reporte
                     iva_monto = text_to_decimal(item_details.get('vat', '0'))
                     ieps_monto = text_to_decimal(item_details.get('ieps', '0'))
                     importe_bruto = text_to_decimal(item_details.get('amount', '0'))
@@ -196,16 +188,13 @@ def process_invoice(cloud_event):
                     codigo_producto = item_details.get('product_code', '')
                     descripcion = item_details.get('description', '')
 
-                # --- CÁLCULOS Y FORMATEO FINAL (COMÚN PARA AMBOS) ---
                 costo_unitario_neto = (costo_total_neto / unidades) if unidades > 0 else Decimal('0.0')
                 sku = product_map.get(codigo_producto, codigo_producto)
                 
-                # Formateo a string para la hoja
                 unidades_str = str(unidades.to_integral_value(rounding=ROUND_HALF_UP))
-                costo_unitario_neto_str = str(costo_unitario_neto.quantize(TWOPLACES, rounding=ROUND_HALF_UP))
-                costo_total_neto_str = str(costo_total_neto.quantize(TWOPLACES, rounding=ROUND_HALF_UP))
+                costo_unitario_neto_str = str(costo_unitario_neto.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+                costo_total_neto_str = str(costo_total_neto.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
                 
-                # Construcción de la fila en el orden correcto de 10 columnas
                 new_row = [ sku, descripcion, unidades_str, costo_unitario_neto_str, costo_total_neto_str, valor_iva, valor_ieps, fecha_formateada, numero_factura, proveedor_final ]
                 rows_to_add.append(new_row)
 
@@ -217,7 +206,6 @@ def process_invoice(cloud_event):
         logging.error(f"Error catastrófico en el procesamiento de {name}: {e}", exc_info=True)
     
     finally:
-        # El archivo se mueve al final, pase lo que pase.
         try:
             move_blob(bucket, name, PROCESSED_BUCKET)
         except Exception as e:
