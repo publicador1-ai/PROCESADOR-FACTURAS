@@ -1,9 +1,0 @@
-functions-framework==3.5.0
-google-cloud-documentai==2.23.0
-google-cloud-storage==2.16.0
-google-api-python-client==2.128.0
-google-auth-httplib2==0.2.0
-google-auth-oauthlib==1.2.0
-pypdf==4.2.0
-thefuzz==0.22.1
-python-Levenshtein==0.25.1
