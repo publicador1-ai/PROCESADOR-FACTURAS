@@ -1,4 +1,3 @@
-# main.py
 import os
 import re
 import io
@@ -154,7 +153,7 @@ def extract_percent(text: str, label: str) -> Optional[Decimal]:
 def sam_cost_unit_custom(amount: Decimal, discount: Decimal, qty: Decimal,
                          iva_pct: Optional[Decimal], ieps_pct: Optional[Decimal]) -> Tuple[Decimal, Decimal, str, str]:
     """
-    Tu fórmula: (importe - descuento)/cantidad * (1+IVA) * (1+IEPS)
+    Fórmula: (importe - descuento)/cantidad * (1+IVA) * (1+IEPS)
     Devuelve (unit_net, line_net, iva_label, ieps_label)
     """
     if qty <= 0:
@@ -165,17 +164,16 @@ def sam_cost_unit_custom(amount: Decimal, discount: Decimal, qty: Decimal,
     iva_factor = (Decimal("1") + iva_pct) if iva_pct is not None else Decimal("1")
     ieps_factor = (Decimal("1") + ieps_pct) if ieps_pct is not None else Decimal("1")
 
-    unit_net = (base_unit * iva_factor * ieps_factor)
+    unit_net = base_unit * iva_factor * ieps_factor
     line_net = unit_net * qty
 
-    iva_label = f"Aplicable {int((iva_pct or Decimal('0'))*100)}%" if iva_pct else "No Aplicable"
+    iva_label = f"Aplicable {int(iva_pct*100)}%" if iva_pct is not None else "No Aplicable"
     # IEPS con un decimal si aplica (ej. 8.5%). Si entero, sin decimal.
     if ieps_pct is not None:
-        ieps_percent = (ieps_pct * 100)
-        ieps_str = f"{ieps_percent.normalize()}"  # limpia ceros
-        # normaliza formato “X.X%”
+        ieps_percent = ieps_pct * Decimal(100)
+        ieps_str = f"{ieps_percent.normalize()}"  # elimina ceros sobrantes
         if "." in ieps_str:
-            # limita a 1 decimal visual si quedó muy largo
+            # limita a 1 decimal visual si quedó con muchos decimales
             try:
                 ieps_str = f"{Decimal(ieps_str).quantize(Decimal('0.1'))}"
             except Exception:
@@ -204,15 +202,15 @@ def unique_key_city(item: Dict[str, Any]) -> Tuple:
 
 def get_mapping_sheet() -> Dict[str, str]:
     """
-    Lee pestaña PRODUCTOS (A:D):
-    A=SKUInterno, D=Codigo Proveedor
-    Devuelve dict { codigo_proveedor: SKUInterno }
+    Lee la pestaña PRODUCTOS (columnas A:D):
+    A = SKUInterno, D = Código Proveedor.
+    Devuelve un dict { codigo_proveedor: SKUInterno }.
     """
     values = sheets_service().spreadsheets().values().get(
         spreadsheetId=SPREADSHEET_ID, range="PRODUCTOS!A:D"
     ).execute().get("values", [])
     mapping: Dict[str, str] = {}
-    for row in values[1:]:  # salta encabezado
+    for row in values[1:]:  # omite encabezado
         sku = (row[0].strip() if len(row) > 0 else "")
         code = (row[3].strip() if len(row) > 3 else "")
         if code:
@@ -239,7 +237,7 @@ def move_blob(src_bucket: str, blob_name: str, dst_bucket: str):
     source_bucket = sc.bucket(src_bucket)
     dest_bucket = sc.bucket(dst_bucket)
     blob = source_bucket.blob(blob_name)
-    # Copia y luego borra
+    # Copia el archivo al bucket destino y luego lo borra del origen
     source_bucket.copy_blob(blob, dest_bucket, blob_name)
     blob.delete()
 
@@ -250,9 +248,7 @@ def process_with_docai(provider: str, pdf_bytes: bytes) -> documentai.ProcessRes
     log({"step": "DOCAI_VERSION", "version": name})
     request = documentai.ProcessRequest(
         name=name,
-        raw_document=documentai.RawDocument(
-            content=pdf_bytes, mime_type="application/pdf"
-        ),
+        raw_document=documentai.RawDocument(content=pdf_bytes, mime_type="application/pdf"),
     )
     return docai_client().process_document(request)
 
@@ -268,9 +264,9 @@ def children_map(e: documentai.Document.Entity) -> Dict[str, str]:
 
 def extract_sams(doc: documentai.Document) -> Tuple[Dict[str, str], List[Dict[str, str]]]:
     """
-    Regresa (header, items) para Sam’s:
+    Regresa (header, items) para Sam’s Club:
     header: { FECHA_FACTURA, NUMERO_FACTURA }
-    items: lista de dict con campos esperados por tu esquema custom
+    items: lista de dicts con campos esperados por el esquema custom
     """
     header: Dict[str, str] = {}
     items: List[Dict[str, str]] = []
@@ -283,7 +279,7 @@ def extract_sams(doc: documentai.Document) -> Tuple[Dict[str, str], List[Dict[st
             row = children_map(ent)
             items.append(row)
         # Algunas versiones ponen IVA/IEPS al nivel de la línea (propiedad de PRODUCTO).
-        # Si viniera a nivel documento, no lo usamos aquí.
+        # Si viniera a nivel documento, se ignora aquí.
 
     return header, items
 
@@ -307,7 +303,7 @@ def extract_city(doc: documentai.Document) -> Tuple[Dict[str, str], List[Dict[st
 @functions_framework.cloud_event
 def procesar_facturas(event: CloudEvent):
     """
-    Maneja eventos de Cloud Storage (Eventarc) para PDF subido.
+    Maneja eventos de Cloud Storage (Eventarc) para archivos PDF subidos.
     """
     try:
         data = event.data or {}
@@ -317,10 +313,10 @@ def procesar_facturas(event: CloudEvent):
         log({"step": "EVENT_RECEIVED", "bucket": bucket, "name": name})
 
         if not bucket or not name:
-            log({"step": "UNHANDLED_ERROR", "err": "Evento sin bucket/name"})
+            log({"step": "UNHANDLED_ERROR", "err": "Evento sin bucket o nombre de archivo"})
             return
 
-        # 1) Descarga PDF (si ya fue movido por un intento anterior, intenta buscar en procesadas)
+        # 1) Descarga el PDF (intenta en bucket de entrada, luego en procesados si ya fue movido)
         pdf_bytes: Optional[bytes] = None
         src_bucket_used = None
         for candidate in (INPUT_BUCKET, PROCESSED_BUCKET, bucket):
@@ -332,18 +328,18 @@ def procesar_facturas(event: CloudEvent):
                 continue
 
         if not pdf_bytes:
-            log({"step": "ERROR_NO_SOURCE", "msg": "No está ni en entrada ni en procesados"})
+            log({"step": "ERROR_NO_SOURCE", "msg": "Archivo no encontrado ni en entrada ni en procesados"})
             return
 
         log({"step": "DOWNLOAD_OK", "bytes": len(pdf_bytes)})
 
-        # 2) Detecta proveedor leyendo la 1a página
+        # 2) Detecta el proveedor leyendo la primera página del PDF
         first_text = read_first_page_text(pdf_bytes)
         provider = detect_provider(first_text)
         log({"step": "PROVIDER_DETECTED", "provider": provider})
 
         if provider == "UNKNOWN":
-            # No procesa, solo mueve a procesadas si viene de entrada
+            # Si no se reconoce proveedor, solo mueve a procesados (si venía de entrada) y termina
             if src_bucket_used and src_bucket_used != PROCESSED_BUCKET:
                 try:
                     move_blob(src_bucket_used, name, PROCESSED_BUCKET)
@@ -352,13 +348,13 @@ def procesar_facturas(event: CloudEvent):
                     log({"step": "MOVE_ERROR", "err": str(e)})
             return
 
-        # 3) Llama a Document AI
+        # 3) Llama a Document AI para procesar el PDF
         resp = process_with_docai(provider, pdf_bytes)
         doc = resp.document
         pages = len(doc.pages or [])
         log({"step": "DOCAI_PROCESS_OK", "pages": pages})
 
-        # 4) Extrae datos por proveedor
+        # 4) Extrae datos según el proveedor
         if provider == "SAMS":
             header, items = extract_sams(doc)
         else:
@@ -368,7 +364,7 @@ def procesar_facturas(event: CloudEvent):
         invoice_date = fmt_date_ddmmyyyy(header.get("FECHA_FACTURA") or header.get("invoice_date") or "")
         log({"step": "PARSE_OK", "invoice": invoice_num[:20], "items": len(items)})
 
-        # 5) Construye mapping de SKU
+        # 5) Construye mapping de SKU desde la hoja de cálculo
         mapping = get_mapping_sheet()
 
         # 6) Formateo de filas para Sheets
@@ -376,7 +372,7 @@ def procesar_facturas(event: CloudEvent):
         seen = set()
 
         if provider == "SAMS":
-            # Dedup y cálculo con tu fórmula
+            # Deduplicación y cálculo según la fórmula especificada
             for it in items:
                 k = unique_key_sam(it)
                 if k in seen:
@@ -389,10 +385,25 @@ def procesar_facturas(event: CloudEvent):
                 gross = parse_decimal(it.get("COSTO_TOTAL_POR_PRODUCTO"))
                 discount = parse_decimal(it.get("DESCUENTO"))
 
-                # IVA/IEPS vienen en el bloque 'IVA' (texto crudo con porcentajes)
+                # IVA/IEPS vienen en el campo 'IVA' como texto crudo con porcentajes
                 iva_block = it.get("IVA") or ""
                 iva_pct = extract_percent(iva_block, "IVA")
                 ieps_pct = extract_percent(iva_block, "IEPS")
+                # Detección adicional por si el texto no incluye las etiquetas
+                if iva_pct is None and iva_block:
+                    text_up = iva_block.upper()
+                    if "IVA" not in text_up and "IEPS" not in text_up:
+                        m = re.search(r"(\d+(?:\.\d+)?)\s*%", iva_block)
+                        if m:
+                            iva_pct = Decimal(m.group(1)) / Decimal(100)
+                if ieps_pct is None and iva_block:
+                    text_up = iva_block.upper()
+                    if "IEPS" in text_up:
+                        idx = text_up.find("IEPS")
+                        sub_text = iva_block[idx:] if idx != -1 else iva_block
+                        m = re.search(r"(\d+(?:\.\d+)?)\s*%", sub_text)
+                        if m:
+                            ieps_pct = Decimal(m.group(1)) / Decimal(100)
 
                 unit_net, line_net, iva_label, ieps_label = sam_cost_unit_custom(
                     gross, discount, qty, iva_pct, ieps_pct
@@ -401,19 +412,19 @@ def procesar_facturas(event: CloudEvent):
                 sku = sku_from_mapping(mapping, code)
 
                 out_rows.append([
-                    sku,                              # SKU
-                    desc,                             # Descripción
-                    str(qty),                         # Unidades
-                    fmt_money(unit_net),              # Costo por unidad neta
-                    fmt_money(line_net),              # Costo total
-                    iva_label,                        # Producto con IVA
-                    ieps_label,                       # Producto con IEPS
-                    invoice_date,                     # Fecha
-                    invoice_num,                      # Factura proveedor
-                    "Sam´s Club"                      # Proveedor
+                    sku,               # SKU interno
+                    desc,              # Descripción del producto
+                    str(qty),          # Unidades
+                    fmt_money(unit_net),   # Costo por unidad neta
+                    fmt_money(line_net),   # Costo total por producto
+                    iva_label,         # Producto sujeto a IVA (porcentaje aplicable)
+                    ieps_label,        # Producto sujeto a IEPS (porcentaje aplicable)
+                    invoice_date,      # Fecha de factura
+                    invoice_num,       # Número de factura del proveedor
+                    "Sam´s Club"       # Proveedor
                 ])
         else:
-            # CITY CLUB según especificación
+            # CITY Club – formateo según especificación
             for it in items:
                 k = unique_key_city(it)
                 if k in seen:
@@ -424,15 +435,42 @@ def procesar_facturas(event: CloudEvent):
                 code = (it.get("product_code") or "").strip()
                 desc = (it.get("description") or "").strip()
                 amount_gross = parse_decimal(it.get("amount"))
-                total_amount = parse_decimal(it.get("total_amount"))  # neto de la línea
+                total_amount = parse_decimal(it.get("total_amount"))   # Total neto de la línea (con impuestos)
                 vat_amount = parse_decimal(it.get("vat"))
                 ieps_amount = parse_decimal(it.get("ieps"))
 
                 unit_net = (total_amount / qty) if qty > 0 else Decimal("0")
-                iva_label = "Aplicable 16%" if vat_amount > 0 else "No Aplicable"
 
-                ieps_pct = (ieps_amount / amount_gross) if amount_gross > 0 else Decimal("0")
-                ieps_label = f"Aplicable {(ieps_pct*100).quantize(Decimal('0.1'))}%" if ieps_amount > 0 else "No Aplicable"
+                # Determina etiqueta de IVA con porcentaje aplicado
+                if vat_amount > 0:
+                    base_for_vat = (amount_gross + ieps_amount) if amount_gross > 0 else Decimal("0")
+                    vat_pct = (vat_amount / base_for_vat) if base_for_vat > 0 else Decimal("0")
+                    vat_percent = vat_pct * Decimal(100)
+                    vat_str = f"{vat_percent.normalize()}"
+                    if "." in vat_str:
+                        try:
+                            vat_str = f"{Decimal(vat_str).quantize(Decimal('0.1'))}"
+                        except Exception:
+                            pass
+                    iva_label = f"Aplicable {vat_str}%"
+                elif vat_amount == 0 and amount_gross > 0:
+                    iva_label = "Aplicable 0%"
+                else:
+                    iva_label = "No Aplicable"
+
+                # Determina etiqueta de IEPS con porcentaje aplicado
+                if ieps_amount > 0:
+                    ieps_pct_calc = (ieps_amount / amount_gross) if amount_gross > 0 else Decimal("0")
+                    ieps_percent = ieps_pct_calc * Decimal(100)
+                    ieps_str = f"{ieps_percent.normalize()}"
+                    if "." in ieps_str:
+                        try:
+                            ieps_str = f"{Decimal(ieps_str).quantize(Decimal('0.1'))}"
+                        except Exception:
+                            pass
+                    ieps_label = f"Aplicable {ieps_str}%"
+                else:
+                    ieps_label = "No Aplicable"
 
                 sku = sku_from_mapping(mapping, code)
 
@@ -449,12 +487,12 @@ def procesar_facturas(event: CloudEvent):
                     "City Club"
                 ])
 
-        # 7) Escribe a Sheets
+        # 7) Escribe las filas recopiladas en la hoja de cálculo (Sheets)
         if out_rows:
             append_rows(out_rows)
             log({"step": "SHEETS_APPEND_OK", "rows": len(out_rows)})
 
-        # 8) Mueve PDF a procesadas (si venía de entrada)
+        # 8) Mueve el PDF procesado al bucket de "procesados" (si provenía del bucket de entrada)
         if src_bucket_used and src_bucket_used != PROCESSED_BUCKET:
             try:
                 move_blob(src_bucket_used, name, PROCESSED_BUCKET)
@@ -464,4 +502,3 @@ def procesar_facturas(event: CloudEvent):
 
     except Exception as e:
         log({"step": "UNHANDLED_ERROR", "err": str(e)})
-
