@@ -488,3 +488,4 @@ def procesar_facturas(event: CloudEvent):
 
     except Exception as e:
         log({"step": "UNHANDLED_ERROR", "err": str(e)})
+        dd
